@@ -31,6 +31,8 @@ local open_chests_task = {
     move_cooldown = 0,
     chests_opened = {},
     current_chest_order = {},
+    start_time = nil,
+    max_total_time = 120, -- 2 minutes timeout for entire process
 
     shouldExecute = function()
         local in_correct_zone = utils.player_in_zone("S05_BSK_Prototype02")
@@ -57,6 +59,16 @@ local open_chests_task = {
     Execute = function(self)
         console.print("Executing open_chests_task")
         console.print("Current state: " .. self.current_state)
+
+        if not self.start_time then
+            self.start_time = get_time_since_inject()
+        end
+
+        if get_time_since_inject() - self.start_time > self.max_total_time then
+            console.print("Chest opening process timed out")
+            self:finish_chest_opening()
+            return
+        end
 
         if tracker.needs_salvage then
             if self.current_state ~= chest_state.PAUSED_FOR_SALVAGE then
@@ -287,7 +299,10 @@ local open_chests_task = {
     finish_chest_opening = function(self)
         console.print("Finishing chest opening task")
         
-        if self:any_chest_opened() then
+        if utils.all_chests_opened() then
+            console.print("All chests were opened")
+            tracker.finished_chest_looting = true
+        elseif self:any_chest_opened() then
             console.print("At least one chest was opened")
             tracker.finished_chest_looting = true
         else
@@ -296,6 +311,7 @@ local open_chests_task = {
         end
 
         console.print("Chest opening task finished")
+        tracker.chest_opening_completed = true
     end,
 
     any_chest_opened = function(self)
@@ -315,10 +331,12 @@ local open_chests_task = {
         self.move_attempts = 0
         self.move_cooldown = 0
         self.chests_opened = {}
+        self.start_time = nil
         tracker.finished_chest_looting = false
         tracker.ga_chest_opened = false
         tracker.selected_chest_opened = false
         tracker.gold_chest_opened = false
+        tracker.chest_opening_completed = false  -- Reset the new flag
         console.print("Reset open_chests_task and related tracker flags")
     end,
 }

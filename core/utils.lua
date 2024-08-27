@@ -280,4 +280,8 @@ function utils.get_aether_actor()
     return nil
 end
 
+function utils.all_chests_opened()
+    return tracker.ga_chest_opened and tracker.selected_chest_opened and tracker.gold_chest_opened
+end
+
 return utils

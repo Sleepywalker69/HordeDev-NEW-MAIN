@@ -66,17 +66,22 @@ local exit_horde_task = {
     end,
 
     check_chests = function(self)
-        local ga_chest = utils.get_chest(enums.chest_types["GREATER_AFFIX"])
-        local selected_chest = utils.get_chest(enums.chest_types[settings.selected_chest_type])
-        local gold_chest = utils.get_chest(enums.chest_types["GOLD"])
-
-        if ga_chest or selected_chest or gold_chest then
-            console.print("Chests found. Moving to open chests state.")
-            self.current_state = exit_horde_states.OPEN_CHESTS
-            self.chest_opening_start_time = get_time_since_inject()
-        else
-            console.print("No chests found. Preparing to exit.")
+        if utils.all_chests_opened() then
+            console.print("All chests already opened. Preparing to exit.")
             self.current_state = exit_horde_states.PREPARE_EXIT
+        else
+            local ga_chest = utils.get_chest(enums.chest_types["GREATER_AFFIX"])
+            local selected_chest = utils.get_chest(enums.chest_types[settings.selected_chest_type])
+            local gold_chest = utils.get_chest(enums.chest_types["GOLD"])
+
+            if ga_chest or selected_chest or gold_chest then
+                console.print("Chests found. Moving to open chests state.")
+                self.current_state = exit_horde_states.OPEN_CHESTS
+                self.chest_opening_start_time = get_time_since_inject()
+            else
+                console.print("No chests found. Preparing to exit.")
+                self.current_state = exit_horde_states.PREPARE_EXIT
+            end
         end
 
         if not gold_chest then
@@ -103,7 +108,7 @@ local exit_horde_task = {
     end,
 
     wait_for_chest_opening = function(self, current_time)
-        if tracker.finished_chest_looting then
+        if tracker.chest_opening_completed then
             console.print("Chest opening completed. Moving to prepare exit.")
             self.current_state = exit_horde_states.PREPARE_EXIT
         elseif current_time - self.chest_opening_start_time > self.max_chest_opening_time then
