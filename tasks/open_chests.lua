@@ -170,22 +170,26 @@ local open_chests_task = {
         local chest = utils.get_chest(enums.chest_types[self.current_chest_type])
 
         if chest then
-            if utils.distance_to(chest) > 2 then
-                if tracker.check_time("request_move_to_chest", 0.15) then
+            local distance = utils.distance_to(chest)
+            console.print(string.format("Distance to %s chest: %.2f", self.current_chest_type, distance))
+
+            if distance > 3 then  -- Increased from 2 to 3
+                if tracker.check_time("request_move_to_chest", 0.5) then  -- Increased from 0.15 to 0.5
                     console.print(string.format("Moving to %s chest", self.current_chest_type))
                     explorer:set_custom_target(chest:get_position())
                     explorer:move_to_target()
 
                     self.move_attempts = (self.move_attempts or 0) + 1
-                    if self.move_attempts >= 20 then  -- Adjust this number as needed
+                    if self.move_attempts >= 20 then
                         console.print("Failed to reach chest after multiple attempts")
                         self:try_next_chest()
                         return
                     end
                 end
             else
+                console.print(string.format("Close enough to %s chest. Preparing to open.", self.current_chest_type))
                 self.current_state = chest_state.OPENING_CHEST
-                self.move_attempts = 0  -- Reset the counter when we successfully reach the chest
+                self.move_attempts = 0
             end
         else
             console.print("Chest not found")
