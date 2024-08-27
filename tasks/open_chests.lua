@@ -1,4 +1,3 @@
-
 local utils = require "core.utils"
 local settings = require "core.settings"
 local enums = require "data.enums"
@@ -28,32 +27,35 @@ local open_chests_task = {
     max_attempts = 3,
     state_before_pause = nil,
     move_attempts = 0,
+    max_move_attempts = 60,
+    move_cooldown = 0,
+    chests_opened = {},
+    current_chest_order = {},
 
     shouldExecute = function()
         local in_correct_zone = utils.player_in_zone("S05_BSK_Prototype02")
 
         if not in_correct_zone then
+            console.print("Not in correct zone for chest opening")
             return false
         end
 
         if tracker.needs_salvage then
-            console.print("  needs_salvage: true")
+            console.print("Needs salvage, not opening chests")
             return false
         end
 
-        local gold_chest_exists = utils.get_chest(enums.chest_types["GOLD"]) ~= nil
-
-        if not gold_chest_exists then
+        if tracker.finished_chest_looting then
+            console.print("Chest looting already finished")
             return false
         end
 
-        console.print("  finished_chest_looting: " .. tostring(tracker.finished_chest_looting))
-
-        return not tracker.finished_chest_looting
+        console.print("Should execute chest opening")
+        return true
     end,
 
     Execute = function(self)
-        local current_time = get_time_since_inject()
+        console.print("Executing open_chests_task")
         console.print("Current state: " .. self.current_state)
 
         if tracker.needs_salvage then
@@ -89,13 +91,13 @@ local open_chests_task = {
     end,
 
     init_chest_opening = function(self)
+        console.print("Initializing chest opening")
         local aether_bomb = utils.get_aether_actor()
         if aether_bomb then
             self.current_state = chest_state.MOVING_TO_AETHER
             return
         end
 
-        console.print("Initializing chest opening")
         console.print("settings.always_open_ga_chest: " .. tostring(settings.always_open_ga_chest))
         console.print("tracker.ga_chest_opened: " .. tostring(tracker.ga_chest_opened))
         console.print("settings.selected_chest_type: " .. tostring(settings.selected_chest_type))
@@ -103,13 +105,17 @@ local open_chests_task = {
         local chest_type_map = {"GEAR", "MATERIALS", "GOLD"}
         self.selected_chest_type = chest_type_map[settings.selected_chest_type + 1]
 
-        self.current_chest_index = 1
+        self.current_chest_order = {}
         if settings.always_open_ga_chest and not tracker.ga_chest_opened then
-            self.current_chest_type = "GREATER_AFFIX"
-        else
-            self.current_chest_index = 2  -- Skip to SELECTED
-            self.current_chest_type = self.selected_chest_type
+            table.insert(self.current_chest_order, "GREATER_AFFIX")
         end
+        if self.selected_chest_type ~= "GOLD" then
+            table.insert(self.current_chest_order, self.selected_chest_type)
+        end
+        table.insert(self.current_chest_order, "GOLD")
+
+        self.current_chest_index = 1
+        self.current_chest_type = self.current_chest_order[self.current_chest_index]
 
         console.print("self.selected_chest_type: " .. tostring(self.selected_chest_type))
         console.print("self.current_chest_type: " .. tostring(self.current_chest_type))
@@ -147,22 +153,13 @@ local open_chests_task = {
         console.print("Selecting chest")
         console.print("Current self.selected_chest_type: " .. tostring(self.selected_chest_type))
         console.print("Current self.current_chest_type: " .. tostring(self.current_chest_type))
-        local chest_type_map = {"GEAR", "MATERIALS", "GOLD"}
-        self.selected_chest_type = chest_type_map[settings.selected_chest_type + 1]
-        console.print("New self.selected_chest_type: " .. tostring(self.selected_chest_type))
-        if not tracker.ga_chest_opened and settings.always_open_ga_chest and utils.get_chest(enums.chest_types["GREATER_AFFIX"]) then
-            self.current_chest_type = "GREATER_AFFIX"
-        else
-            self.current_chest_type = self.selected_chest_type
-        end
-        console.print("Final self.current_chest_type: " .. tostring(self.current_chest_type))
         self.current_state = chest_state.MOVING_TO_CHEST
     end,
 
     move_to_chest = function(self)
         if self.current_chest_type == nil then
             console.print("Error: current_chest_type is nil")
-            self:try_next_chest()
+            self:try_next_chest(false)
             return
         end
 
@@ -173,16 +170,19 @@ local open_chests_task = {
             local distance = utils.distance_to(chest)
             console.print(string.format("Distance to %s chest: %.2f", self.current_chest_type, distance))
 
-            if distance > 3 then  -- Increased from 2 to 3
-                if tracker.check_time("request_move_to_chest", 0.5) then  -- Increased from 0.15 to 0.5
+            if distance > 3 then
+                local current_time = get_time_since_inject()
+                if current_time >= self.move_cooldown then
                     console.print(string.format("Moving to %s chest", self.current_chest_type))
                     explorer:set_custom_target(chest:get_position())
                     explorer:move_to_target()
 
                     self.move_attempts = (self.move_attempts or 0) + 1
-                    if self.move_attempts >= 20 then
+                    self.move_cooldown = current_time + 0.5  -- Set a 0.5 second cooldown
+
+                    if self.move_attempts >= self.max_move_attempts then
                         console.print("Failed to reach chest after multiple attempts")
-                        self:try_next_chest()
+                        self:try_next_chest(false)
                         return
                     end
                 end
@@ -193,7 +193,7 @@ local open_chests_task = {
             end
         else
             console.print("Chest not found")
-            self:try_next_chest()
+            self:try_next_chest(false)
         end
     end,
 
@@ -206,7 +206,7 @@ local open_chests_task = {
                 self.current_state = chest_state.WAITING_FOR_VFX
             else
                 console.print("Chest not found when trying to open")
-                self:try_next_chest()
+                self:try_next_chest(false)
                 -- Log all nearby actors to help debug
                 local actors = actors_manager:get_all_actors()
                 for _, actor in pairs(actors) do
@@ -246,58 +246,65 @@ local open_chests_task = {
         console.print("Current self.current_chest_type: " .. tostring(self.current_chest_type))
         console.print("Current self.selected_chest_type: " .. tostring(self.selected_chest_type))
 
+        if was_successful then
+            self.chests_opened[self.current_chest_type] = true
+            if self.current_chest_type == "GREATER_AFFIX" then
+                tracker.ga_chest_opened = true
+            elseif self.current_chest_type == self.selected_chest_type then
+                tracker.selected_chest_opened = true
+            elseif self.current_chest_type == "GOLD" then
+                tracker.gold_chest_opened = true
+            end
+        end
+
         local function move_to_next_chest()
-            self.current_chest_index = (self.current_chest_index or 0) + 1
-            if self.current_chest_index <= #chest_order then
-                local next_chest = chest_order[self.current_chest_index]
-                if next_chest == "SELECTED" then
-                    self.current_chest_type = self.selected_chest_type
-                else
-                    self.current_chest_type = next_chest
-                end
+            self.current_chest_index = self.current_chest_index + 1
+            if self.current_chest_index <= #self.current_chest_order then
+                self.current_chest_type = self.current_chest_order[self.current_chest_index]
                 return true
             end
             return false
         end
 
-        if not was_successful or self.current_chest_type ~= self.selected_chest_type then
-            if not move_to_next_chest() then
-                console.print("All chest types exhausted, finishing task")
+        if not move_to_next_chest() then
+            if self:any_chest_opened() then
+                console.print("All available chests opened, finishing task")
                 self.current_state = chest_state.FINISHED
                 tracker.finished_chest_looting = true
-                return
+            else
+                console.print("Failed to open any chests, resetting task")
+                self:reset()
             end
-        end
-
-        if self.current_chest_type == "GREATER_AFFIX" then
-            tracker.ga_chest_opened = true
-        elseif self.current_chest_type == self.selected_chest_type then
-            tracker.selected_chest_opened = true
-        elseif self.current_chest_type == "GOLD" then
-            tracker.gold_chest_opened = true
+            return
         end
 
         console.print("Next chest type set to: " .. self.current_chest_type)
         self.current_state = chest_state.MOVING_TO_CHEST
-        self.failed_attempts = 0
+        self.move_attempts = 0
+        self.move_cooldown = 0
     end,
 
     finish_chest_opening = function(self)
-        if self.current_chest_type == "GREATER_AFFIX" then
-            tracker.ga_chest_opened = true
-        elseif self.current_chest_type == self.selected_chest_type then
-            tracker.selected_chest_opened = true
+        console.print("Finishing chest opening task")
+        
+        if self:any_chest_opened() then
+            console.print("At least one chest was opened")
+            tracker.finished_chest_looting = true
+        else
+            console.print("No chests were opened, resetting task")
+            self:reset()
         end
-
-        if self.current_chest_type == "GOLD" or self.selected_chest_type == "GOLD" then
-            tracker.gold_chest_opened = true
-        end
-
-        tracker.finished_chest_looting = true
-        console.print("Set tracker.finished_chest_looting to true in finish_chest_opening")
 
         console.print("Chest opening task finished")
-        return
+    end,
+
+    any_chest_opened = function(self)
+        for _, opened in pairs(self.chests_opened) do
+            if opened then
+                return true
+            end
+        end
+        return false
     end,
 
     reset = function(self)
@@ -305,6 +312,9 @@ local open_chests_task = {
         self.current_chest_type = nil
         self.failed_attempts = 0
         self.current_chest_index = nil
+        self.move_attempts = 0
+        self.move_cooldown = 0
+        self.chests_opened = {}
         tracker.finished_chest_looting = false
         tracker.ga_chest_opened = false
         tracker.selected_chest_opened = false
