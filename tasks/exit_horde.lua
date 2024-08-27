@@ -13,6 +13,7 @@ exit_horde_task = {
     delay_start_time = nil,
     moved_to_center = false,
     no_gold_chest_count = 0,
+    force_exit_time = nil,
 
     shouldExecute = function()
         return utils.player_in_zone("S05_BSK_Prototype02")
@@ -22,6 +23,21 @@ exit_horde_task = {
 
     Execute = function(self)
         local current_time = get_time_since_inject()
+
+        -- If we're forcing an exit, wait for a bit before continuing
+        if self.force_exit_time then
+            if current_time - self.force_exit_time < 10 then
+                console.print(string.format("Waiting before starting new horde... %.2f seconds remaining", 10 - (current_time - self.force_exit_time)))
+                return
+            else
+                self.force_exit_time = nil
+                tracker.force_horde_start = true
+                self:reset()
+                self:full_reset()
+                reset_all_dungeons()
+                return
+            end
+        end
 
         -- First, move to the center if not already there
         if not self.moved_to_center then
@@ -43,10 +59,9 @@ exit_horde_task = {
             self.no_gold_chest_count = self.no_gold_chest_count + 1
             
             if self.no_gold_chest_count >= 5 then
-                console.print("No gold chest found 5 times. Triggering new horde start.")
-                self:reset()
-                self:full_reset()
-                tracker.force_horde_start = true
+                console.print("No gold chest found 5 times. Forcing horde exit.")
+                self.force_exit_time = current_time
+                reset_all_dungeons()
                 return
             end
             
@@ -56,7 +71,7 @@ exit_horde_task = {
         -- Reset the counter if a gold chest is found
         self.no_gold_chest_count = 0
 
-        -- Proceed with exit procedure
+        -- Proceed with normal exit procedure
         if not self.delay_start_time then
             self.delay_start_time = current_time
             console.print("Starting 5-second delay before initiating exit procedure")
@@ -94,6 +109,7 @@ exit_horde_task = {
         self.delay_start_time = nil
         self.moved_to_center = false
         self.no_gold_chest_count = 0
+        self.force_exit_time = nil
     end,
 
     full_reset = function(self)
