@@ -5,7 +5,6 @@ local tracker = require "core.tracker"
 local open_chests_task = require "tasks.open_chests"
 local explorer = require "core.explorer"
 
--- Reference the position from horde.lua
 local horde_boss_room_position = vec3:new(-36.17675, -36.3222, 2.200)
 
 local exit_horde_states = {
@@ -17,7 +16,7 @@ local exit_horde_states = {
     FORCE_EXIT = "FORCE_EXIT"
 }
 
-exit_horde_task = {
+local exit_horde_task = {
     name = "Exit Horde",
     current_state = exit_horde_states.MOVE_TO_CENTER,
     delay_start_time = nil,
@@ -146,7 +145,6 @@ exit_horde_task = {
 
     full_reset = function(self)
         console.print("Performing full reset for new horde start")
-        -- Reset all relevant tracker flags
         tracker.ga_chest_opened = false
         tracker.selected_chest_opened = false
         tracker.gold_chest_opened = false
@@ -158,13 +156,8 @@ exit_horde_task = {
         tracker.wave_start_time = 0
         tracker.needs_salvage = false
 
-        -- Reset open_chests_task
         open_chests_task:reset()
-
-        -- Reset explorer if necessary
         explorer:clear_path_and_target()
-
-        -- Any other task-specific resets can be added here
     end
 }
 

@@ -4,33 +4,23 @@ local settings = require "core.settings"
 local navigation = require "core.navigation"
 local tracker = require "core.tracker"
 local explorer = require "core.explorer"
-tracker.horde_opened = false  -- For start_dungeon again, after dying and exit horde
+local pylons = require "data.pylons"
 
--- Define the bomber object with its states and tasks
+tracker.horde_opened = false
+
 local bomber = {
     enabled = false,
     is_task_running = false,
     bomber_task_running = false,
 }
 
--- Define key positions for movement and patterns
 local horde_center_position = vec3:new(9.204102, 8.915039, 0.000000)
+local horde_left_position = vec3:new(19.5658, -1.5756, 0.6289)
+local horde_right_position = vec3:new(0.24825286, 20.6410, 0.4697)
+local horde_bottom_position = vec3:new(20.17866, 17.897891, 0.24707)
 local unstuck_position = vec3:new(16.8066444, 12.58058, 0.000000)
 local horde_boss_room_position = vec3:new(-36.17675, -36.3222, 2.200)
 
-
-
-local move_positions = {
-    horde_center_position,
-    vec3:new(19.5658, -1.5756, 0.6289),       -- From Middle to Left side 
-    horde_center_position,
-    vec3:new(20.17866, 17.897891, 0.24707),   -- From Middle to Down side
-    horde_center_position,
-    vec3:new(0.24825286, 20.6410, 0.4697),    -- From Middle to Right side
-    horde_center_position,
-}
-
--- Data for circular shooting pattern
 local circle_data = {
     radius = 90,
     steps = 20,
@@ -45,77 +35,56 @@ function bomber:bomb_to(pos)
     explorer:move_to_target()
 end
 
--- Function to get the current time since the script was injected
 local function get_current_time()
     return get_time_since_inject()
 end
 
--- Function to get the player's current position
 local function get_player_pos()
     return get_player_position()
 end
 
-
--- Function to check if all waves are cleared
 function bomber:all_waves_cleared()
     local actors = actors_manager:get_all_actors()
-    local locked_door_found = false
     local enemy_found = false
 
-    -- Zuerst nach Gegnern suchen
     for _, actor in pairs(actors) do
         if target_selector.is_valid_enemy(actor) then
             enemy_found = true
-            break  -- Schleife beenden, sobald ein Gegner gefunden wurde
+            break
         end
     end
 
-    -- Wenn kein Gegner gefunden wurde, nach verschlossenen Türen suchen
-    if not enemy_found then
-        for _, actor in pairs(actors) do
-            if actor:get_skin_name() == "BSK_MapIcon_LockedDoor" then
-                locked_door_found = true
-                break  -- Schleife beenden, sobald eine verschlossene Tür gefunden wurde
-            end
-        end
+    if not enemy_found and bomber:get_locked_door() then
+        tracker.locked_door_found = true
     end
-
-    if not enemy_found and locked_door_found then
-        bomber:move_in_pattern()
-    end
-
-    return not (locked_door_found or enemy_found)  -- Wellen sind gecleared, wenn weder Tür noch Feind gefunden
+    return tracker.locked_door_found or not enemy_found 
 end
 
-
--- Function to move in a circular pattern and shoot
 function bomber:shoot_in_circle()
     local current_time = get_time_since_inject()
     local player_position = get_player_position()
-    
-    -- First, navigate to the horde center position
+
     if player_position:dist_to(horde_center_position) > 15 then
         console.print("Moving to horde center position")
         bomber:bomb_to(horde_center_position)
         return
     end
 
-    -- Once at the center, perform the circle shooting logic
     if current_time - circle_data.last_action_time >= circle_data.delay then
         local center_x, center_y, center_z = horde_center_position:x(), horde_center_position:y(), horde_center_position:z()
         local angle = (circle_data.current_step / circle_data.steps) * (2 * math.pi)
-        
+
         local x = center_x + circle_data.radius * math.cos(angle)
         local y = center_y + circle_data.radius * math.sin(angle)
         local z = center_z + circle_data.height_offset * math.sin(angle)
-        
+
         local new_position = vec3:new(x, y, z)
         bomber:bomb_to(new_position)
-        
+
         circle_data.last_action_time = current_time
         circle_data.current_step = circle_data.current_step + 1
         if circle_data.current_step > circle_data.steps then
-            circle_data.current_step = 1 -- Reset to start a new circle
+            circle_data.current_step = 1
         end
     end
 end
@@ -192,38 +161,6 @@ function bomber:get_target()
     return closest_spire or closest_hellborne or closest_mass or closest_membrane or closest_aether or closest_monster
 end
 
-
-
--- List of pylons with their priorities
-local pylons = {
-    "SkulkingHellborne",       -- Hellborne Hunting You, Hellborne +1 Aether
-    "SurgingHellborne",        -- +1 Hellborne when Spawned, Hellborne Grant +1 Aether
-    "RagingHellfire",          -- Hellfire rains upon you, at the end of each wave spawn 1-3 Aether
-    "MeteoricHellborne",       -- Hellfire now spawns Hellborne, +1 Aether
-    "EmpoweredHellborne",      -- Hellborne +25% Damage, Hellborne grant +1 Aether
-    "InvigoratingHellborne",   -- Hellborne Damage +25%, Slaying Hellborne Invigorates you
-    "BlisteringHordes",        -- Normal Monster Spawn Aether Events 50% Faster
-    "SurgingElites",           -- Chance for Elite Doubled, Aether Fiends grant +1 Aether
-    "EmpoweredElites",         -- Elite damage +25%, Aether Fiends grant +1 Aether
-	"UnstoppableElites",       -- Elites are Unstoppable, Aether Fiends grant +1 Aether
-    "UnstableFiends",          -- Elite Damage +25%, Aether Fiends explode and damage FOES
-    "ThrivingMasses",          -- Masses deal unavoidable damage, Wave start, spawn an Aetheric Mass
-    "EmpoweredMasses",         -- Aetheric Mass damage: +25%, Aetheric Mass grants +1 Aether
-	"GreedySpires",            -- Soulspire requires 2x kills, Soulspires grant 2x Aether
-    "DeadlySpires",            -- Soulspires Drain Health, Soulspires grant +2 Aether
-    "CorruptingSpires",        -- Soulspires empower nearby foes, they also pull enemies inward
-    "AetherRush",              -- Normal Monsters Damage +25%, Gathering Aether Increases Movement Speed
-    "IncreasedEvadeCooldown",  -- Increase Evade Cooldown +2 Sec, Council grants +15 Aether
-    "IncreasedPotionCooldown", -- Increase potion cooldown +2 Sec, Council Grants +15 Aether
-    "EmpoweredCouncil",        -- Fell Council +50% Damage, Council grants +15 Aether
-    "ReduceAllResistance",     -- Reduce All Resist -10%, Council grants +15 Aether
-    "EnergizingMasses",        -- Slaying Aetheric Masses slow you, While slowed this way, you have UNLIMITED RESOURCES
-    "InfernalLords",           -- Aether Lords Now Spawn, they grant +3 Aether
-    "GestatingMasses",         -- Masses spawn an Aether lord on Death, Aether Lords Grant +3 Aether
-    "InfernalStalker",         -- An Infernal demon has your scent, Slay it to gain +25 Aether
-}
-
--- Function to get the highest priority pylon from the list
 function bomber:get_pylons()
     if not pylons or #pylons == 0 then
         console.print("Error: Pylon list is empty or not defined.")
@@ -254,7 +191,6 @@ function bomber:get_pylons()
     return highest_priority_actor
 end
 
--- Function to get the locked door if it is present and not in a wave
 function bomber:get_locked_door()
     local actors = actors_manager:get_all_actors()
     local is_locked, in_wave = false, false
@@ -270,32 +206,28 @@ function bomber:get_locked_door()
     return not in_wave and is_locked and door_actor
 end
 
--- Function to get the Aether actor if present
-function bomber:get_aether_actor()
-    local actors = actors_manager:get_all_actors()
-    for _, actor in pairs(actors) do
-        local name = actor:get_skin_name()
-        if name == "Aether_PowerUp_Actor" or name == "S05_Reputation_Experience_PowerUp_Actor" then
-            return actor
-        end
-    end
-end
-
 local move_index = 1
 local reached_target = false
 local target_reach_time = 0
 
--- Extract position components for printing
 local function position_to_string(pos)
     return string.format("x: %.2f, y: %.2f, z: %.2f", pos:x(), pos:y(), pos:z())
 end
 
--- Function to move in a defined pattern to specific positions
-function bomber:move_in_pattern()
+function bomber:move_in_pattern(move_positions, run_victory_lap)
+    move_positions = move_positions or {
+        horde_center_position,
+        horde_left_position,
+        horde_center_position,
+        horde_bottom_position,
+        horde_center_position,
+        horde_right_position,
+        horde_center_position,
+    }
+
     console.print("Starting move_in_pattern function")
 
-    -- Prüfen, ob ein Ziel gefunden wurde
-    if self:get_target() then
+    if bomber:get_target() then
         console.print("Target found, stopping movement in pattern.")
         return 
     end
@@ -304,17 +236,15 @@ function bomber:move_in_pattern()
     console.print("Total positions: " .. tostring(#move_positions))
 
     if move_index > #move_positions then
+        if run_victory_lap then
+            tracker.victory_lap = true
+        end
         move_index = 1
         console.print("Reset move_index to 1")
     end
 
     local target_position = move_positions[move_index]
     console.print("Current target position: " .. position_to_string(target_position))
-
-    -- Extract position components for printing
-    local function position_to_string(pos)
-        return string.format("x: %.2f, y: %.2f, z: %.2f", pos:x(), pos:y(), pos:z())
-    end
 
     local player_pos = get_player_position()
     console.print("Current player position: " .. position_to_string(player_pos))
@@ -350,9 +280,8 @@ function bomber:move_in_pattern()
 end
 
 local last_enemy_check_time = 0
-local enemy_check_interval = 0.000001 -- Interval in seconds to check for enemies
+local enemy_check_interval = 0.000001
 
--- Main function to handle the bomber's actions based on the current game state
 function bomber:main_pulse()
     if get_local_player():is_dead() then
         console.print("Player is dead. Reviving at checkpoint.")
@@ -365,7 +294,8 @@ function bomber:main_pulse()
 
     local pylon = bomber:get_pylons()    
     if pylon then
-        local aether_actor = bomber:get_aether_actor()
+        move_index = 1
+        local aether_actor = utils.get_aether_actor()
         if aether_actor then
             console.print("Targeting Aether actor.")
             bomber:bomb_to(aether_actor:get_position())
@@ -382,6 +312,55 @@ function bomber:main_pulse()
         return
     end
 
+    local target = bomber:get_target()
+    if target then
+        local name = target:get_skin_name()
+        if utils.distance_to(target) > 1.5 then
+            console.print("Moving to target: " .. name)
+            bomber:bomb_to(target:get_position())
+        else
+            console.print("Target " .. name .. " in range. Performing circular shooting.")
+            bomber:shoot_in_circle()
+        end
+        last_enemy_check_time = current_time
+        return
+    elseif bomber:all_waves_cleared() then
+        local aether = utils.get_aether_actor()
+        if aether then
+            console.print("All waves cleared. Targeting Aether actor.")
+            bomber:bomb_to(aether:get_position())
+            return
+        end
+
+        if settings.merry_go_round then
+            local positions = {
+                horde_center_position,
+                horde_right_position,
+                horde_bottom_position,
+                horde_left_position,
+                horde_center_position,
+            }
+            if not tracker.victory_lap then
+                console.print("Doing a victory lap.")
+                bomber:move_in_pattern(positions, true)
+                return
+            end
+        end
+
+        if not tracker.boss_killed then
+            if get_player_pos():dist_to(horde_boss_room_position) > 2 then
+                console.print("Moving to boss room position.")
+                bomber:bomb_to(horde_boss_room_position)
+            else
+                console.print("In boss room. Performing circular shooting.")
+                bomber:shoot_in_circle()
+            end
+        end
+    else
+        console.print("shoot in circle Moving in pattern.")
+        bomber:move_in_pattern()
+    end
+
     local locked_door = bomber:get_locked_door()
     if locked_door then
         if utils.distance_to(locked_door) > 2 then
@@ -394,45 +373,8 @@ function bomber:main_pulse()
         last_enemy_check_time = current_time
         return
     end
-
-    local target = bomber:get_target()
-    if target then
-        local name = target:get_skin_name()
-        if utils.distance_to(target) > 1.5 then
-            console.print("Moving to target: " .. name)  -- Print target name
-            bomber:bomb_to(target:get_position())
-        else
-            console.print("Target " .. name .. " in range. Performing circular shooting.")
-            bomber:shoot_in_circle()
-        end
-        last_enemy_check_time = current_time
-        return
-    else
-        
-        if bomber:all_waves_cleared() then
-            local aether = bomber:get_aether_actor()
-            if aether then
-                console.print("All waves cleared. Targeting Aether actor.")
-                bomber:bomb_to(aether:get_position())
-                return
-            end
-
-            if get_player_pos():dist_to(horde_boss_room_position) > 2 then
-                console.print("Moving to boss room position.")
-                bomber:bomb_to(horde_boss_room_position)
-            else
-                console.print("In boss room. Performing circular shooting.")
-                bomber:shoot_in_circle()
-            end
-        else
-            console.print("shoot in circle Moving in pattern.")
-            bomber:move_in_pattern()
-            
-        end
-    end
 end
 
--- Define the task for the Infernal Horde and its execution conditions
 local has_printed_execution_message = false
 
 local task = {
@@ -440,7 +382,7 @@ local task = {
     shouldExecute = function()
         return utils.player_in_zone("S05_BSK_Prototype02")
     end,
-    
+
     Execute = function()
         if not has_printed_execution_message then
             console.print("Infernal Horde task executing.")
@@ -449,4 +391,5 @@ local task = {
         bomber:main_pulse()
     end
 }
+
 return task
